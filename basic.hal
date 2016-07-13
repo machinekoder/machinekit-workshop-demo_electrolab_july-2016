@@ -1,0 +1,90 @@
+newthread base-thread 1000000 fp
+
+loadrt hal_bb_gpio output_pins=816,822,823,824,825,826,914,923,925 input_pins=807,808,809,810,817,911,913
+loadrt hal_pru_generic prucode=/usr/lib/linuxcnc/xenomai/pru_generic.bin pru=0 num_stepgens=4 num_pwmgens=6 halname=hpg
+loadrt siggen names=test
+
+addf bb_gpio.read base-thread
+addf hpg.capture-position base-thread
+addf test.update base-thread
+
+setp hpg.stepgen.00.position-scale 200.0
+setp hpg.stepgen.00.steplen 1000
+setp hpg.stepgen.00.stepspace 1000
+setp hpg.stepgen.00.dirhold 200
+setp hpg.stepgen.00.dirsetup 200
+setp hpg.stepgen.00.steppin 815
+setp hpg.stepgen.00.dirpin 814
+setp hpg.stepgen.00.control-type 0
+setp hpg.stepgen.00.maxvel 200.0
+setp hpg.stepgen.00.maxaccel 2000.0
+setp hpg.stepgen.00.enable 1
+
+newsig machine-enable bit
+
+# Axis enable signal (active low)
+net machine-enable bb_gpio.p9.out-14
+setp bb_gpio.p9.out-14.invert 1
+
+# Machine power
+# Use halui.machine.is-on instead?
+net machine-enable bb_gpio.p9.out-23
+
+# power button (red)
+#net machine-enable bb_gpio.p8.in-07
+
+# siggen setup
+setp test.frequency 1.0
+
+newsig pos-cmd float
+net pos-cmd test.square hpg.stepgen.00.position-cmd
+
+# compare position with feedback -> ferror
+newsig pos-fb float
+newsig ferror float
+newinst sum2 sum2.ferror
+addf sum2.ferror base-thread
+net pos-cmd sum2.ferror.in0
+net pos-fb sum2.ferror.in1
+net pos-fb hpg.stepgen.00.position-fb
+setp sum2.ferror.gain1 -1.0
+net ferror sum2.ferror.out
+
+newsig huston-we-have-problem bit
+newinst wcomp wcomp.ferror
+addf wcomp.ferror base-thread
+setp wcomp.ferror.min -0.1
+setp wcomp.ferror.max 0.1
+net ferror wcomp.ferror.in
+net huston-we-have-problem wcomp.ferror.out
+
+# Tie machine power signal to the CRAMPS LED
+# Feel free to tie any other signal you like to the LED
+net huston-we-have-problem bb_gpio.p9.out-25
+setp bb_gpio.p9.out-25.invert 1
+
+# write functions
+addf hpg.update base-thread
+addf bb_gpio.write base-thread
+
+# UI remote component
+newsig maxaccel float
+
+newcomp ui 100
+newpin ui ui.ferror-led bit in
+newpin ui ui.ferror float in
+newpin ui ui.power bit out
+newpin ui ui.maxaccel float out
+ready ui
+
+setp ui.maxaccel 2000.0
+setp ui.power 0
+
+net maxaccel ui.maxaccel hpg.stepgen.00.maxaccel
+net machine-enable ui.power
+net huston-we-have-problem ui.ferror-led
+net ferror ui.ferror
+
+loadusr haltalk
+
+start
